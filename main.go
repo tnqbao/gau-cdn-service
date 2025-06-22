@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	err := godotenv.Load()
+	err := godotenv.Load("/gau_cdn/cdn.env")
 	if err != nil {
 		log.Println("No .env file found, continuing with environment variables")
 	}
@@ -23,5 +23,5 @@ func main() {
 	ctrl := controller.NewController(newConfig, newInfra)
 
 	router := routes.SetupRouter(ctrl)
-	router.Run(":8080")
+	router.Run(":8082")
 }

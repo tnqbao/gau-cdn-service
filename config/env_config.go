@@ -1,17 +1,16 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 )
 
 type EnvConfig struct {
-	JWT struct {
-		SecretKey string
-		Algorithm string
-		Expire    int
-	}
+	//JWT struct {
+	//	SecretKey string
+	//	Algorithm string
+	//	Expire    int
+	//}
 	Redis struct {
 		Address  string
 		Password string
@@ -28,15 +27,15 @@ type EnvConfig struct {
 func LoadEnvConfig() *EnvConfig {
 	var config EnvConfig
 
-	// JWT
-	config.JWT.SecretKey = os.Getenv("JWT_SECRET_KEY")
-	config.JWT.Algorithm = os.Getenv("JWT_ALGORITHM")
-
-	if val := os.Getenv("JWT_EXPIRE"); val != "" {
-		fmt.Sscanf(val, "%d", &config.JWT.Expire)
-	} else {
-		config.JWT.Expire = 3600 * 24 * 7
-	}
+	//// JWT
+	//config.JWT.SecretKey = os.Getenv("JWT_SECRET_KEY")
+	//config.JWT.Algorithm = os.Getenv("JWT_ALGORITHM")
+	//
+	//if val := os.Getenv("JWT_EXPIRE"); val != "" {
+	//	fmt.Sscanf(val, "%d", &config.JWT.Expire)
+	//} else {
+	//	config.JWT.Expire = 3600 * 24 * 7
+	//}
 
 	// Redis
 	config.Redis.Address = os.Getenv("REDIS_ADDRESS")

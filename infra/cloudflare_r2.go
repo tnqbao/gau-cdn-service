@@ -67,3 +67,27 @@ func (r *CloudflareR2Client) GetObject(ctx context.Context, key string) ([]byte,
 	contentType := aws.ToString(resp.ContentType)
 	return buf.Bytes(), contentType, nil
 }
+
+func (r *CloudflareR2Client) GetObjectWithLimit(ctx context.Context, key string, maxSize int64) ([]byte, string, error) {
+	resp, err := r.Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(r.BucketName),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get object: %w", err)
+	}
+	defer resp.Body.Close()
+
+	limited := io.LimitReader(resp.Body, maxSize+1)
+	buf := new(bytes.Buffer)
+	n, err := io.Copy(buf, limited)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read object: %w", err)
+	}
+	if n > maxSize {
+		return nil, "", fmt.Errorf("object too large (%d bytes)", n)
+	}
+
+	contentType := aws.ToString(resp.ContentType)
+	return buf.Bytes(), contentType, nil
+}

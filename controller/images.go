@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/tnqbao/gau-cdn-service/utils"
 	"net/http"
 	"strings"
 )
@@ -11,17 +12,16 @@ import (
 const maxFetchSize = 10 * 1024 * 1024 // 10 MB max R2 image size
 
 func (ctrl *Controller) GetImage(c *gin.Context) {
-	filepath := c.Param("filepath") // e.g., "/user123/avatar.jpg"
+	filepath := c.Param("filepath")
 	if filepath == "" || filepath == "/" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file path"})
+		utils.JSON400(c, "invalid file path")
 		return
 	}
 
-	key := filepath[1:] // remove leading slash
+	key := filepath[1:]
 	compressedKey := "compressed:" + key
 	ctx := context.Background()
 
-	// Check Redis cache
 	data, contentType, err := ctrl.Repository.GetImage(ctx, compressedKey)
 	if err == nil && len(data) > 0 {
 		c.Header("X-From-Cache", "true")
@@ -29,14 +29,12 @@ func (ctrl *Controller) GetImage(c *gin.Context) {
 		return
 	}
 
-	// Fetch from R2 with size limit
 	data, contentType, err = ctrl.Infra.CloudflareR2Client.GetObjectWithLimit(ctx, key, maxFetchSize)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "file not found or too large"})
+		utils.JSON404(c, "file not found or too large")
 		return
 	}
 
-	// Optional compression
 	toCache := data
 	isCompressed := false
 
@@ -50,7 +48,6 @@ func (ctrl *Controller) GetImage(c *gin.Context) {
 		}
 	}
 
-	// Cache result
 	if err := ctrl.Repository.SetImage(ctx, compressedKey, toCache, contentType); err != nil {
 		fmt.Printf("⚠️ cache failed: %v\n", err)
 	}

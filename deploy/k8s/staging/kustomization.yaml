@@ -6,3 +6,4 @@ resources:
   - ./base/service.yaml
   - ./base/hpa.yaml
   - ./base/ingress.yaml
+  - ./base/configmap.yaml

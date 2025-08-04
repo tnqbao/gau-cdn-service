@@ -12,7 +12,7 @@ import (
 const maxFetchSize = 10 * 1024 * 1024 // 10 MB max R2 image size
 
 func (ctrl *Controller) GetImage(c *gin.Context) {
-	filepath := c.Param("filepath")
+	filepath := c.Param("filePath")
 	if filepath == "" || filepath == "/" {
 		utils.JSON400(c, "invalid file path")
 		return
@@ -31,6 +31,7 @@ func (ctrl *Controller) GetImage(c *gin.Context) {
 
 	data, contentType, err = ctrl.Infra.CloudflareR2Client.GetObjectWithLimit(ctx, key, maxFetchSize)
 	if err != nil {
+		fmt.Printf("fetch failed: %v\n", err)
 		utils.JSON404(c, "file not found or too large")
 		return
 	}
@@ -44,12 +45,12 @@ func (ctrl *Controller) GetImage(c *gin.Context) {
 			contentType = "image/jpeg"
 			isCompressed = true
 		} else {
-			fmt.Printf("⚠️ compress failed: %v\n", err)
+			fmt.Printf("compress failed: %v\n", err)
 		}
 	}
 
 	if err := ctrl.Repository.SetImage(ctx, compressedKey, toCache, contentType); err != nil {
-		fmt.Printf("⚠️ cache failed: %v\n", err)
+		fmt.Printf("cache failed: %v\n", err)
 	}
 
 	if isCompressed {

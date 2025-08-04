@@ -13,7 +13,7 @@ type RedisClient struct {
 
 func InitRedisClient(cfg *config.EnvConfig) *RedisClient {
 	client := redis.NewClient(&redis.Options{
-		Addr:     cfg.Redis.Address,
+		Addr:     cfg.Redis.RedisHost + ":" + cfg.Redis.RedisPort,
 		Password: cfg.Redis.Password,
 		DB:       cfg.Redis.Database,
 	})
@@ -22,7 +22,7 @@ func InitRedisClient(cfg *config.EnvConfig) *RedisClient {
 		log.Fatalf("Redis connection failed: %v", err)
 	}
 
-	log.Println("Connected to Redis:", cfg.Redis.Address)
+	log.Println("Connected to Redis:", cfg.Redis.RedisPort+" on "+cfg.Redis.RedisHost)
 
 	return &RedisClient{Client: client}
 }

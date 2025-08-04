@@ -23,5 +23,5 @@ func main() {
 	ctrl := controller.NewController(newConfig, newInfra)
 
 	router := routes.SetupRouter(ctrl)
-	router.Run(":8082")
+	router.Run(":8080")
 }

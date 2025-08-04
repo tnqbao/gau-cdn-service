@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bao-cdn-${DEPLOY_ENV}-config
+  namespace: bao-${DEPLOY_ENV}-env
+data:
+  REDIS_HOST: "${REDIS_HOST}"
+  REDIS_PORT: "${REDIS_PORT}"
+  REDIS_DB: "${REDIS_DB}"
+  CACHE_TIME: "${CACHE_TIME}"
+  CACHE_SIZE: "${CACHE_SIZE}"

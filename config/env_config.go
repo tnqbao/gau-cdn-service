@@ -27,16 +27,6 @@ type EnvConfig struct {
 func LoadEnvConfig() *EnvConfig {
 	var config EnvConfig
 
-	//// JWT
-	//config.JWT.SecretKey = os.Getenv("JWT_SECRET_KEY")
-	//config.JWT.Algorithm = os.Getenv("JWT_ALGORITHM")
-	//
-	//if val := os.Getenv("JWT_EXPIRE"); val != "" {
-	//	fmt.Sscanf(val, "%d", &config.JWT.Expire)
-	//} else {
-	//	config.JWT.Expire = 3600 * 24 * 7
-	//}
-
 	// Redis
 	config.Redis.Address = os.Getenv("REDIS_ADDRESS")
 	config.Redis.Password = os.Getenv("REDIS_PASSWORD")

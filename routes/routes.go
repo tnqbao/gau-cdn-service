@@ -7,10 +7,10 @@ import (
 
 func SetupRouter(ctrl *controller.Controller) *gin.Engine {
 	r := gin.Default()
-	apiRoutes := r.Group("/uploads")
+	apiRoutes := r.Group("/images")
 	{
 		//apiRoutes.POST("/upload", ctrl.UploadFile)
-		apiRoutes.GET("/*fileName", ctrl.GetImage)
+		apiRoutes.GET("/*filePath", ctrl.GetImage)
 	}
 	return r
 }

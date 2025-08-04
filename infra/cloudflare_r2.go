@@ -34,6 +34,7 @@ func NewCloudflareR2Client(cfg *appconfig.EnvConfig) (*CloudflareR2Client, error
 
 	// Load AWS configuration with custom endpoint and credentials
 	awsCfg, err := awsconfig.LoadDefaultConfig(context.TODO(),
+		awsconfig.WithRegion("auto"),
 		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secret, "")),
 		awsconfig.WithEndpointResolverWithOptions(customResolver),
 	)

@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gau-cdn-deployment
+  namespace: bao-${DEPLOY_ENV}-env
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gau-cdn-service
+  template:
+    metadata:
+      labels:
+        app: gau-cdn-service
+    spec:
+      containers:
+        - name: gau-cdn-service
+          image: iamqbao/gau_cdn_service:latest
+          envFrom:
+            - configMapRef:
+                name: bao-cdn-${DEPLOY_ENV}-config
+            - secretRef:
+                name: bao-cdn-${DEPLOY_ENV}-secret
+          resources:
+            requests:
+              cpu: "300m"
+              memory: "500Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-cdn-deployment
+  namespace: bao-${DEPLOY_ENV}-env
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-cdn-service
+  template:
+    metadata:
+      labels:
+        app: redis-cdn-service
+    spec:
+      containers:
+        - name: redis-cdn-service
+          envFrom:
+            - configMapRef:
+                name: bao-cdn-${DEPLOY_ENV}-config
+            - secretRef:
+                name: bao-cdn-${DEPLOY_ENV}-secret
+          image: redis:7.2-alpine
+          resources:
+            requests:
+              cpu: "0.3"
+              memory: "512Mi"
+            limits:
+              cpu: "0.5"
+              memory: "1Gi"

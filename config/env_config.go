@@ -6,15 +6,11 @@ import (
 )
 
 type EnvConfig struct {
-	//JWT struct {
-	//	SecretKey string
-	//	Algorithm string
-	//	Expire    int
-	//}
 	Redis struct {
-		Address  string
-		Password string
-		Database int
+		RedisHost string
+		RedisPort string
+		Password  string
+		Database  int
 	}
 	CloudflareR2 struct {
 		Endpoint   string
@@ -22,13 +18,19 @@ type EnvConfig struct {
 		SecretKey  string
 		BucketName string
 	}
+
+	Limit struct {
+		CacheTime int64
+		CacheSize int64
+	}
 }
 
 func LoadEnvConfig() *EnvConfig {
 	var config EnvConfig
 
 	// Redis
-	config.Redis.Address = os.Getenv("REDIS_ADDRESS")
+	config.Redis.RedisHost = os.Getenv("REDIS_HOST")
+	config.Redis.RedisPort = os.Getenv("REDIS_PORT")
 	config.Redis.Password = os.Getenv("REDIS_PASSWORD")
 	config.Redis.Database, _ = strconv.Atoi(os.Getenv("REDIS_DB"))
 	if config.Redis.Database == 0 {
@@ -45,5 +47,17 @@ func LoadEnvConfig() *EnvConfig {
 		config.CloudflareR2.BucketName = "default-bucket" // Default bucket name if not set
 	}
 
+	// Limit
+	cacheTime, err := strconv.ParseInt(os.Getenv("CACHE_TIME"), 10, 64)
+	if err != nil {
+		cacheTime = 3600 // Default to 1 hour if not set or invalid
+	}
+
+	config.Limit.CacheTime = cacheTime
+	cacheSize, err := strconv.ParseInt(os.Getenv("CACHE_SIZE"), 10, 64)
+	if err != nil {
+		cacheSize = 10 * 1024 * 1024 // 10 MB
+	}
+	config.Limit.CacheSize = cacheSize
 	return &config
 }

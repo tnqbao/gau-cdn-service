@@ -13,7 +13,7 @@ type Controller struct {
 }
 
 func NewController(cfg *config.Config, infra *infra.Infra) *Controller {
-	newRepository := repository.InitRepository(infra)
+	newRepository := repository.InitRepository(infra, cfg.EnvConfig)
 	return &Controller{
 		Config:     cfg,
 		Infra:      infra,

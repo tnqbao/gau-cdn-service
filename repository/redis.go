@@ -19,8 +19,9 @@ func (r *Repository) GetImage(ctx context.Context, key string) ([]byte, string, 
 
 func (r *Repository) SetImage(ctx context.Context, key string, data []byte, contentType string) error {
 	pipe := r.cacheDb.TxPipeline()
-	pipe.Set(ctx, key, data, time.Hour*24*7)
-	pipe.Set(ctx, key+":content-type", contentType, time.Hour*24*7)
+	timeout := time.Second * time.Duration(r.envConfig.Limit.CacheTime)
+	pipe.Set(ctx, key, data, timeout)
+	pipe.Set(ctx, key+":content-type", contentType, timeout)
 	_, err := pipe.Exec(ctx)
 	return err
 }

@@ -23,7 +23,7 @@ spec:
                 name: bao-cdn-${DEPLOY_ENV}-secret
           resources:
             requests:
-              cpu: "300m"
+              cpu: "200m"
               memory: "500Mi"
             limits:
               cpu: "500m"

@@ -13,11 +13,13 @@ type EnvConfig struct {
 		Password  string
 		Database  int
 	}
-	CloudflareR2 struct {
+
+	Minio struct {
 		Endpoint   string
 		AccessKey  string
 		SecretKey  string
 		BucketName string
+		UseSSL     bool
 	}
 
 	Limit struct {
@@ -48,15 +50,18 @@ func LoadEnvConfig() *EnvConfig {
 		config.Redis.Database = 0 // Default to 0 if not set
 	}
 
-	// Cloudflare R2
-	config.CloudflareR2.Endpoint = os.Getenv("CLOUDFLARE_R2_ENDPOINT")
-	config.CloudflareR2.AccessKey = os.Getenv("CLOUDFLARE_R2_ACCESS_KEY_ID")
-	config.CloudflareR2.SecretKey = os.Getenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY")
-	if bucketName := os.Getenv("CLOUDFLARE_R2_BUCKET_NAME"); bucketName != "" {
-		config.CloudflareR2.BucketName = bucketName
-	} else {
-		config.CloudflareR2.BucketName = "default-bucket" // Default bucket name if not set
+	// MinIO
+	config.Minio.Endpoint = os.Getenv("MINIO_ENDPOINT")
+	if config.Minio.Endpoint == "" {
+		config.Minio.Endpoint = "localhost:9000"
 	}
+	config.Minio.AccessKey = os.Getenv("MINIO_ACCESS_KEY")
+	config.Minio.SecretKey = os.Getenv("MINIO_SECRET_KEY")
+	config.Minio.BucketName = os.Getenv("MINIO_BUCKET_NAME")
+	if config.Minio.BucketName == "" {
+		config.Minio.BucketName = "cdn-files"
+	}
+	config.Minio.UseSSL = os.Getenv("MINIO_USE_SSL") == "true"
 
 	// Limit
 	cacheTime, err := strconv.ParseInt(os.Getenv("CACHE_TIME"), 10, 64)

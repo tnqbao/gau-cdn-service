@@ -2,9 +2,10 @@ package infra
 
 import (
 	"context"
+	"log"
+
 	"github.com/redis/go-redis/v9"
 	"github.com/tnqbao/gau-cdn-service/config"
-	"log"
 )
 
 type RedisClient struct {

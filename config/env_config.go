@@ -51,17 +51,27 @@ func LoadEnvConfig() *EnvConfig {
 	}
 
 	// MinIO
-	config.Minio.Endpoint = os.Getenv("MINIO_ENDPOINT")
-	if config.Minio.Endpoint == "" {
-		config.Minio.Endpoint = "localhost:9000"
+	minioEndpoint := os.Getenv("MINIO_ENDPOINT")
+	if minioEndpoint == "" {
+		minioEndpoint = "localhost:9000"
 	}
-	config.Minio.AccessKey = os.Getenv("MINIO_ACCESS_KEY")
-	config.Minio.SecretKey = os.Getenv("MINIO_SECRET_KEY")
+	// Strip protocol from endpoint - MinIO client doesn't accept full URLs
+	if strings.HasPrefix(minioEndpoint, "https://") {
+		config.Minio.Endpoint = strings.TrimPrefix(minioEndpoint, "https://")
+		config.Minio.UseSSL = true
+	} else if strings.HasPrefix(minioEndpoint, "http://") {
+		config.Minio.Endpoint = strings.TrimPrefix(minioEndpoint, "http://")
+		config.Minio.UseSSL = false
+	} else {
+		config.Minio.Endpoint = minioEndpoint
+		config.Minio.UseSSL = os.Getenv("MINIO_USE_SSL") == "true"
+	}
+	config.Minio.AccessKey = os.Getenv("MINIO_ACCESS_KEY_ID")
+	config.Minio.SecretKey = os.Getenv("MINIO_SECRET_ACCESS_KEY")
 	config.Minio.BucketName = os.Getenv("MINIO_BUCKET_NAME")
 	if config.Minio.BucketName == "" {
 		config.Minio.BucketName = "cdn-files"
 	}
-	config.Minio.UseSSL = os.Getenv("MINIO_USE_SSL") == "true"
 
 	// Limit
 	cacheTime, err := strconv.ParseInt(os.Getenv("CACHE_TIME"), 10, 64)

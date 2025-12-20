@@ -3,11 +3,12 @@ package controller
 import (
 	"bytes"
 	"fmt"
-	"github.com/disintegration/imaging"
 	"image"
 	"image/jpeg"
 	"image/png"
 	"strings"
+
+	"github.com/disintegration/imaging"
 )
 
 // coverts an image to JPEG format and compresses it to be under 100KB

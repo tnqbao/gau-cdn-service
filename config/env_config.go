@@ -13,11 +13,13 @@ type EnvConfig struct {
 		Password  string
 		Database  int
 	}
-	CloudflareR2 struct {
+
+	Minio struct {
 		Endpoint   string
 		AccessKey  string
 		SecretKey  string
 		BucketName string
+		UseSSL     bool
 	}
 
 	Limit struct {
@@ -48,14 +50,27 @@ func LoadEnvConfig() *EnvConfig {
 		config.Redis.Database = 0 // Default to 0 if not set
 	}
 
-	// Cloudflare R2
-	config.CloudflareR2.Endpoint = os.Getenv("CLOUDFLARE_R2_ENDPOINT")
-	config.CloudflareR2.AccessKey = os.Getenv("CLOUDFLARE_R2_ACCESS_KEY_ID")
-	config.CloudflareR2.SecretKey = os.Getenv("CLOUDFLARE_R2_SECRET_ACCESS_KEY")
-	if bucketName := os.Getenv("CLOUDFLARE_R2_BUCKET_NAME"); bucketName != "" {
-		config.CloudflareR2.BucketName = bucketName
+	// MinIO
+	minioEndpoint := os.Getenv("MINIO_ENDPOINT")
+	if minioEndpoint == "" {
+		minioEndpoint = "localhost:9000"
+	}
+	// Strip protocol from endpoint - MinIO client doesn't accept full URLs
+	if strings.HasPrefix(minioEndpoint, "https://") {
+		config.Minio.Endpoint = strings.TrimPrefix(minioEndpoint, "https://")
+		config.Minio.UseSSL = true
+	} else if strings.HasPrefix(minioEndpoint, "http://") {
+		config.Minio.Endpoint = strings.TrimPrefix(minioEndpoint, "http://")
+		config.Minio.UseSSL = false
 	} else {
-		config.CloudflareR2.BucketName = "default-bucket" // Default bucket name if not set
+		config.Minio.Endpoint = minioEndpoint
+		config.Minio.UseSSL = os.Getenv("MINIO_USE_SSL") == "true"
+	}
+	config.Minio.AccessKey = os.Getenv("MINIO_ACCESS_KEY_ID")
+	config.Minio.SecretKey = os.Getenv("MINIO_SECRET_ACCESS_KEY")
+	config.Minio.BucketName = os.Getenv("MINIO_BUCKET_NAME")
+	if config.Minio.BucketName == "" {
+		config.Minio.BucketName = "cdn-files"
 	}
 
 	// Limit

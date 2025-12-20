@@ -7,15 +7,15 @@ import (
 )
 
 type Infra struct {
-	CloudflareR2Client *CloudflareR2Client
-	RedisClient        *RedisClient
-	Logger             *LoggerClient
+	MinioClient *MinioClient
+	RedisClient *RedisClient
+	Logger      *LoggerClient
 }
 
 func InitInfra(cfg *config.Config) *Infra {
-	r2, err := NewCloudflareR2Client(cfg.EnvConfig)
+	minioClient, err := NewMinioClient(cfg.EnvConfig)
 	if err != nil {
-		log.Fatalf("Failed to initialize Cloudflare R2 client: %v", err)
+		log.Fatalf("Failed to initialize MinIO client: %v", err)
 	}
 
 	redisClient := InitRedisClient(cfg.EnvConfig)
@@ -25,8 +25,8 @@ func InitInfra(cfg *config.Config) *Infra {
 		panic("Failed to create Logger client")
 	}
 	return &Infra{
-		CloudflareR2Client: r2,
-		RedisClient:        redisClient,
-		Logger:             loggerClient,
+		MinioClient: minioClient,
+		RedisClient: redisClient,
+		Logger:      loggerClient,
 	}
 }

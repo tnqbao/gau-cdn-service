@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -43,5 +44,12 @@ func JSON404(c *gin.Context, err string) {
 	c.JSON(404, gin.H{
 		"error":  err,
 		"status": 404,
+	})
+}
+
+func JSON403(c *gin.Context, err string) {
+	c.JSON(403, gin.H{
+		"error":  err,
+		"status": 403,
 	})
 }

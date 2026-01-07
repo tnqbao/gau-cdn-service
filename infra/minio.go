@@ -28,8 +28,20 @@ type ObjectInfo struct {
 
 func NewMinioClient(cfg *appconfig.EnvConfig) (*MinioClient, error) {
 	endpoint := cfg.Minio.Endpoint
+	if endpoint == "" {
+		return nil, fmt.Errorf("MinIO endpoint is not configured")
+	}
+
 	accessKey := cfg.Minio.AccessKey
+	if accessKey == "" {
+		return nil, fmt.Errorf("MinIO access key is not configured")
+	}
+
 	secretKey := cfg.Minio.SecretKey
+	if secretKey == "" {
+		return nil, fmt.Errorf("MinIO secret key is not configured")
+	}
+
 	bucketName := cfg.Minio.BucketName
 	useSSL := cfg.Minio.UseSSL
 
@@ -39,6 +51,34 @@ func NewMinioClient(cfg *appconfig.EnvConfig) (*MinioClient, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MinIO client: %w", err)
+	}
+
+	return &MinioClient{
+		Client:     client,
+		BucketName: bucketName,
+	}, nil
+}
+
+// NewMinioClientWithCredentials creates a temporary MinIO client with custom credentials
+func NewMinioClientWithCredentials(cfg *appconfig.EnvConfig, accessKey, secretKey string) (*MinioClient, error) {
+	endpoint := cfg.Minio.Endpoint
+	if endpoint == "" {
+		return nil, fmt.Errorf("MinIO endpoint is not configured")
+	}
+
+	if accessKey == "" || secretKey == "" {
+		return nil, fmt.Errorf("access key and secret key cannot be empty")
+	}
+
+	bucketName := cfg.Minio.BucketName
+	useSSL := cfg.Minio.UseSSL
+
+	client, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: useSSL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create MinIO client with custom credentials: %w", err)
 	}
 
 	return &MinioClient{
@@ -123,6 +163,13 @@ func (m *MinioClient) GetSmallObject(ctx context.Context, bucket, key string, ma
 
 // StreamToWriter streams object directly to writer with buffer (for large files)
 func (m *MinioClient) StreamToWriter(ctx context.Context, bucket, key string, w io.Writer, opts minio.GetObjectOptions) (int64, string, error) {
+	if bucket == "" {
+		return 0, "", fmt.Errorf("bucket cannot be empty")
+	}
+	if key == "" {
+		return 0, "", fmt.Errorf("key cannot be empty")
+	}
+
 	reader, info, err := m.GetObjectStream(ctx, bucket, key, opts)
 	if err != nil {
 		return 0, "", err
@@ -137,4 +184,14 @@ func (m *MinioClient) StreamToWriter(ctx context.Context, bucket, key string, w 
 	}
 
 	return written, info.ContentType, nil
+}
+
+// IsAccessDeniedError checks if the error is an access denied error from MinIO
+func IsAccessDeniedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return minio.ToErrorResponse(err).Code == "AccessDenied" ||
+		minio.ToErrorResponse(err).Code == "InvalidAccessKeyId" ||
+		minio.ToErrorResponse(err).Code == "SignatureDoesNotMatch"
 }

@@ -3,10 +3,10 @@ package controller
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/minio/minio-go/v7"
@@ -15,13 +15,12 @@ import (
 )
 
 const (
-	// Timeouts
-	OriginReadTimeout = 30 * time.Second
+// Timeouts
+// OriginReadTimeout = 30 * time.Second
 )
 
 func (ctrl *Controller) GetFile(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), OriginReadTimeout)
-	defer cancel()
+	ctx := c.Request.Context()
 
 	bucket := c.Param("bucket")
 	path := c.Param("path")
@@ -41,27 +40,47 @@ func (ctrl *Controller) GetFile(c *gin.Context) {
 		return
 	}
 
+	// Get optional access_key and secret_key from query params
+	accessKey := c.Query("access_key")
+	secretKey := c.Query("secret_key")
+
+	// Determine which MinIO client to use
+	var minioClient *infra.MinioClient
+	var err error
+
+	if accessKey != "" && secretKey != "" {
+		// Create temporary client with custom credentials
+		minioClient, err = infra.NewMinioClientWithCredentials(ctrl.Config.EnvConfig, accessKey, secretKey)
+		if err != nil {
+			ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, err, "[GetFile] Failed to create MinIO client with custom credentials")
+			utils.JSON500(c, "failed to initialize storage client")
+			return
+		}
+		ctrl.Provider.LoggerProvider.InfoWithContextf(ctx, "[GetFile] Using custom credentials for bucket=%s, key=%s", bucket, key)
+	} else {
+		// Use default client from controller
+		minioClient = ctrl.Infra.MinioClient
+		ctrl.Provider.LoggerProvider.InfoWithContextf(ctx, "[GetFile] Using default credentials for bucket=%s, key=%s", bucket, key)
+	}
+
 	ctrl.Provider.LoggerProvider.InfoWithContextf(ctx, "[GetFile] Request: bucket=%s, key=%s", bucket, key)
 
 	// Check for Range header (video streaming, resume download)
 	rangeHeader := c.GetHeader("Range")
 	if rangeHeader != "" {
-		ctrl.handleRangeRequest(c, ctx, bucket, key, rangeHeader)
+		ctrl.handleRangeRequest(c, ctx, minioClient, bucket, key, rangeHeader)
 		return
 	}
 
-	// Try to get from cache first (only for small files)
-	cacheKey := fmt.Sprintf("cdn:%s:%s", bucket, key)
-	if data, contentType, err := ctrl.Repository.GetImage(ctx, cacheKey); err == nil && len(data) > 0 {
-		ctrl.Provider.LoggerProvider.InfoWithContextf(ctx, "[GetFile] Cache hit for key: %s", cacheKey)
-		ctrl.setCacheHeaders(c, true)
-		c.Data(http.StatusOK, contentType, data)
-		return
-	}
-
-	// HEAD request to get file metadata for cache decision
-	objInfo, err := ctrl.Infra.MinioClient.HeadObject(ctx, bucket, key)
+	// Get file metadata to determine size
+	objInfo, err := minioClient.HeadObject(ctx, bucket, key)
 	if err != nil {
+		// Check if it's an Access Denied error
+		if infra.IsAccessDeniedError(err) {
+			ctrl.Provider.LoggerProvider.WarningWithContextf(ctx, "[GetFile] Access denied for bucket=%s, key=%s", bucket, key)
+			utils.JSON403(c, "Access Denied")
+			return
+		}
 		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, err, "[GetFile] HEAD request failed for bucket=%s, key=%s", bucket, key)
 		utils.JSON404(c, "file not found")
 		return
@@ -69,41 +88,106 @@ func (ctrl *Controller) GetFile(c *gin.Context) {
 
 	ctrl.Provider.LoggerProvider.InfoWithContextf(ctx, "[GetFile] File info: size=%d, type=%s", objInfo.Size, objInfo.ContentType)
 
-	// Decide strategy based on file size
+	// For small files < 50MB, try cache first
 	if objInfo.Size <= infra.SmallFileSizeLimit {
-		// Small file: load to memory and cache in Redis
-		ctrl.handleSmallFile(c, ctx, bucket, key, cacheKey, objInfo)
+		cacheKey := fmt.Sprintf("cdn:%s:%s", bucket, key)
+		if data, contentType, err := ctrl.Repository.GetImage(ctx, cacheKey); err == nil && len(data) > 0 {
+			ctrl.Provider.LoggerProvider.InfoWithContextf(ctx, "[GetFile] Cache hit for key: %s", cacheKey)
+			ctrl.setCacheHeaders(c, true)
+			c.Header("Content-Length", strconv.FormatInt(int64(len(data)), 10))
+			c.Header("ETag", objInfo.ETag)
+			c.Data(http.StatusOK, contentType, data)
+			return
+		}
+
+		// Validate size before handling small file
+		if objInfo.Size <= 0 {
+			ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, nil, "[GetFile] Invalid file size detected before handling: bucket=%s, key=%s, size=%d", bucket, key, objInfo.Size)
+			utils.JSON404(c, "file not found or has invalid size")
+			return
+		}
+
+		// Cache miss, fetch and cache small file
+		ctrl.handleSmallFileWithCache(c, ctx, minioClient, bucket, key, cacheKey, objInfo)
 	} else {
-		// Large file: stream directly without caching in Redis
-		ctrl.handleLargeFile(c, ctx, bucket, key, objInfo)
+		// Large file: stream directly without caching
+		ctrl.handleLargeFileStream(c, ctx, minioClient, bucket, key, objInfo)
 	}
 }
 
-// handleSmallFile loads small files into memory and caches in Redis
-func (ctrl *Controller) handleSmallFile(c *gin.Context, ctx context.Context, bucket, key, cacheKey string, objInfo *infra.ObjectInfo) {
-	data, contentType, err := ctrl.Infra.MinioClient.GetSmallObject(ctx, bucket, key, infra.SmallFileSizeLimit)
-	if err != nil {
-		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, err, "[GetFile] Failed to get small object: bucket=%s, key=%s", bucket, key)
-		utils.JSON500(c, "failed to fetch file")
+// handleSmallFileWithCache streams small files and caches them in Redis
+func (ctrl *Controller) handleSmallFileWithCache(c *gin.Context, ctx context.Context, minioClient *infra.MinioClient, bucket, key, cacheKey string, objInfo *infra.ObjectInfo) {
+	// Validate size before allocating buffer
+	if objInfo.Size <= 0 {
+		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, nil, "[GetFile] Invalid file size: bucket=%s, key=%s, size=%d", bucket, key, objInfo.Size)
+		utils.JSON500(c, "invalid file size")
 		return
 	}
 
-	// Cache in Redis for future requests
-	if err := ctrl.Repository.SetImage(ctx, cacheKey, data, contentType); err != nil {
-		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, err, "[GetFile] Failed to cache file: %s", cacheKey)
-		// Continue serving even if cache fails
+	if objInfo.Size > infra.SmallFileSizeLimit {
+		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, nil, "[GetFile] File too large for small file handler: bucket=%s, key=%s, size=%d", bucket, key, objInfo.Size)
+		utils.JSON500(c, "file too large")
+		return
 	}
 
+	// Get object stream from MinIO
+	reader, _, err := minioClient.GetObjectStream(ctx, bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		// Check if it's an Access Denied error
+		if infra.IsAccessDeniedError(err) {
+			ctrl.Provider.LoggerProvider.WarningWithContextf(ctx, "[GetFile] Access denied for bucket=%s, key=%s", bucket, key)
+			utils.JSON403(c, "Access Denied")
+			return
+		}
+		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, err, "[GetFile] Failed to get small object stream: bucket=%s, key=%s", bucket, key)
+		utils.JSON500(c, "failed to fetch file")
+		return
+	}
+	defer reader.Close()
+
+	// Read into buffer for caching (small files only)
+	data := make([]byte, objInfo.Size)
+	n, err := io.ReadFull(reader, data)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, err, "[GetFile] Failed to read small object: bucket=%s, key=%s", bucket, key)
+		utils.JSON500(c, "failed to read file")
+		return
+	}
+	data = data[:n]
+
+	// Cache in Redis for future requests (async, don't block response)
+	go func() {
+		if err := ctrl.Repository.SetImage(context.Background(), cacheKey, data, objInfo.ContentType); err != nil {
+			ctrl.Provider.LoggerProvider.ErrorWithContextf(context.Background(), err, "[GetFile] Failed to cache file: %s", cacheKey)
+		}
+	}()
+
+	// Set response headers and send data
 	ctrl.setCacheHeaders(c, false)
 	c.Header("Content-Length", strconv.FormatInt(int64(len(data)), 10))
 	c.Header("ETag", objInfo.ETag)
-	c.Data(http.StatusOK, contentType, data)
+	c.Data(http.StatusOK, objInfo.ContentType, data)
 
 	ctrl.Provider.LoggerProvider.InfoWithContextf(ctx, "[GetFile] Served small file: bucket=%s, key=%s, size=%d", bucket, key, len(data))
 }
 
-// handleLargeFile streams large files directly to client using io.CopyBuffer
-func (ctrl *Controller) handleLargeFile(c *gin.Context, ctx context.Context, bucket, key string, objInfo *infra.ObjectInfo) {
+// handleLargeFileStream streams large files directly from MinIO to client without loading into memory
+func (ctrl *Controller) handleLargeFileStream(c *gin.Context, ctx context.Context, minioClient *infra.MinioClient, bucket, key string, objInfo *infra.ObjectInfo) {
+	// Get object stream from MinIO
+	reader, _, err := minioClient.GetObjectStream(ctx, bucket, key, minio.GetObjectOptions{})
+	if err != nil {
+		// Check if it's an Access Denied error
+		if infra.IsAccessDeniedError(err) {
+			ctrl.Provider.LoggerProvider.WarningWithContextf(ctx, "[GetFile] Access denied for bucket=%s, key=%s", bucket, key)
+			utils.JSON403(c, "Access Denied")
+			return
+		}
+		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, err, "[GetFile] Failed to get object stream: bucket=%s, key=%s", bucket, key)
+		utils.JSON500(c, "failed to fetch file")
+		return
+	}
+	defer reader.Close()
+
 	// Set headers before streaming
 	c.Header("Content-Type", objInfo.ContentType)
 	c.Header("Content-Length", strconv.FormatInt(objInfo.Size, 10))
@@ -112,8 +196,9 @@ func (ctrl *Controller) handleLargeFile(c *gin.Context, ctx context.Context, buc
 	ctrl.setCacheHeaders(c, false)
 	c.Status(http.StatusOK)
 
-	// Stream directly to response writer
-	written, _, err := ctrl.Infra.MinioClient.StreamToWriter(ctx, bucket, key, c.Writer, minio.GetObjectOptions{})
+	// Stream directly to response writer with buffer
+	buf := make([]byte, infra.StreamBufferSize)
+	written, err := io.CopyBuffer(c.Writer, reader, buf)
 	if err != nil {
 		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, err, "[GetFile] Stream failed: bucket=%s, key=%s, written=%d", bucket, key, written)
 		// Can't send error response as headers already sent
@@ -124,10 +209,16 @@ func (ctrl *Controller) handleLargeFile(c *gin.Context, ctx context.Context, buc
 }
 
 // handleRangeRequest handles HTTP Range requests for video streaming and resume download
-func (ctrl *Controller) handleRangeRequest(c *gin.Context, ctx context.Context, bucket, key, rangeHeader string) {
+func (ctrl *Controller) handleRangeRequest(c *gin.Context, ctx context.Context, minioClient *infra.MinioClient, bucket, key, rangeHeader string) {
 	// Get file metadata first
-	objInfo, err := ctrl.Infra.MinioClient.HeadObject(ctx, bucket, key)
+	objInfo, err := minioClient.HeadObject(ctx, bucket, key)
 	if err != nil {
+		// Check if it's an Access Denied error
+		if infra.IsAccessDeniedError(err) {
+			ctrl.Provider.LoggerProvider.WarningWithContextf(ctx, "[GetFile] Access denied for bucket=%s, key=%s", bucket, key)
+			utils.JSON403(c, "Access Denied")
+			return
+		}
 		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, err, "[GetFile] HEAD request failed for range request: bucket=%s, key=%s", bucket, key)
 		utils.JSON404(c, "file not found")
 		return
@@ -156,6 +247,12 @@ func (ctrl *Controller) handleRangeRequest(c *gin.Context, ctx context.Context, 
 	// Stream range to client
 	reader, _, err := ctrl.Infra.MinioClient.GetObjectWithRange(ctx, bucket, key, start, end)
 	if err != nil {
+		// Check if it's an Access Denied error
+		if infra.IsAccessDeniedError(err) {
+			ctrl.Provider.LoggerProvider.WarningWithContextf(ctx, "[GetFile] Access denied for bucket=%s, key=%s", bucket, key)
+			utils.JSON403(c, "Access Denied")
+			return
+		}
 		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, err, "[GetFile] Range request failed: bucket=%s, key=%s, range=%d-%d", bucket, key, start, end)
 		return
 	}

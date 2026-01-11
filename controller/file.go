@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -65,10 +66,16 @@ func (ctrl *Controller) GetFile(c *gin.Context) {
 
 	ctrl.Provider.LoggerProvider.InfoWithContextf(ctx, "[GetFile] Request: bucket=%s, key=%s", bucket, key)
 
+	// Check if download mode is requested
+	downloadMode := c.Query("mode") == "download"
+	if downloadMode {
+		ctrl.Provider.LoggerProvider.InfoWithContextf(ctx, "[GetFile] Download mode requested for bucket=%s, key=%s", bucket, key)
+	}
+
 	// Check for Range header (video streaming, resume download)
 	rangeHeader := c.GetHeader("Range")
 	if rangeHeader != "" {
-		ctrl.handleRangeRequest(c, ctx, minioClient, bucket, key, rangeHeader)
+		ctrl.handleRangeRequest(c, ctx, minioClient, bucket, key, rangeHeader, downloadMode)
 		return
 	}
 
@@ -94,6 +101,12 @@ func (ctrl *Controller) GetFile(c *gin.Context) {
 		if data, contentType, err := ctrl.Repository.GetImage(ctx, cacheKey); err == nil && len(data) > 0 {
 			ctrl.Provider.LoggerProvider.InfoWithContextf(ctx, "[GetFile] Cache hit for key: %s", cacheKey)
 			ctrl.setCacheHeaders(c, true)
+
+			// Set download headers if requested
+			if downloadMode {
+				ctrl.setDownloadHeaders(c, key)
+			}
+
 			c.Header("Content-Length", strconv.FormatInt(int64(len(data)), 10))
 			c.Header("ETag", objInfo.ETag)
 			c.Data(http.StatusOK, contentType, data)
@@ -108,15 +121,15 @@ func (ctrl *Controller) GetFile(c *gin.Context) {
 		}
 
 		// Cache miss, fetch and cache small file
-		ctrl.handleSmallFileWithCache(c, ctx, minioClient, bucket, key, cacheKey, objInfo)
+		ctrl.handleSmallFileWithCache(c, ctx, minioClient, bucket, key, cacheKey, objInfo, downloadMode)
 	} else {
 		// Large file: stream directly without caching
-		ctrl.handleLargeFileStream(c, ctx, minioClient, bucket, key, objInfo)
+		ctrl.handleLargeFileStream(c, ctx, minioClient, bucket, key, objInfo, downloadMode)
 	}
 }
 
 // handleSmallFileWithCache streams small files and caches them in Redis
-func (ctrl *Controller) handleSmallFileWithCache(c *gin.Context, ctx context.Context, minioClient *infra.MinioClient, bucket, key, cacheKey string, objInfo *infra.ObjectInfo) {
+func (ctrl *Controller) handleSmallFileWithCache(c *gin.Context, ctx context.Context, minioClient *infra.MinioClient, bucket, key, cacheKey string, objInfo *infra.ObjectInfo, downloadMode bool) {
 	// Validate size before allocating buffer
 	if objInfo.Size <= 0 {
 		ctrl.Provider.LoggerProvider.ErrorWithContextf(ctx, nil, "[GetFile] Invalid file size: bucket=%s, key=%s, size=%d", bucket, key, objInfo.Size)
@@ -164,6 +177,12 @@ func (ctrl *Controller) handleSmallFileWithCache(c *gin.Context, ctx context.Con
 
 	// Set response headers and send data
 	ctrl.setCacheHeaders(c, false)
+
+	// Set download headers if requested
+	if downloadMode {
+		ctrl.setDownloadHeaders(c, key)
+	}
+
 	c.Header("Content-Length", strconv.FormatInt(int64(len(data)), 10))
 	c.Header("ETag", objInfo.ETag)
 	c.Data(http.StatusOK, objInfo.ContentType, data)
@@ -172,7 +191,7 @@ func (ctrl *Controller) handleSmallFileWithCache(c *gin.Context, ctx context.Con
 }
 
 // handleLargeFileStream streams large files directly from MinIO to client without loading into memory
-func (ctrl *Controller) handleLargeFileStream(c *gin.Context, ctx context.Context, minioClient *infra.MinioClient, bucket, key string, objInfo *infra.ObjectInfo) {
+func (ctrl *Controller) handleLargeFileStream(c *gin.Context, ctx context.Context, minioClient *infra.MinioClient, bucket, key string, objInfo *infra.ObjectInfo, downloadMode bool) {
 	// Get object stream from MinIO
 	reader, _, err := minioClient.GetObjectStream(ctx, bucket, key, minio.GetObjectOptions{})
 	if err != nil {
@@ -193,6 +212,12 @@ func (ctrl *Controller) handleLargeFileStream(c *gin.Context, ctx context.Contex
 	c.Header("Content-Length", strconv.FormatInt(objInfo.Size, 10))
 	c.Header("ETag", objInfo.ETag)
 	c.Header("Accept-Ranges", "bytes")
+
+	// Set download headers if requested
+	if downloadMode {
+		ctrl.setDownloadHeaders(c, key)
+	}
+
 	ctrl.setCacheHeaders(c, false)
 	c.Status(http.StatusOK)
 
@@ -209,7 +234,7 @@ func (ctrl *Controller) handleLargeFileStream(c *gin.Context, ctx context.Contex
 }
 
 // handleRangeRequest handles HTTP Range requests for video streaming and resume download
-func (ctrl *Controller) handleRangeRequest(c *gin.Context, ctx context.Context, minioClient *infra.MinioClient, bucket, key, rangeHeader string) {
+func (ctrl *Controller) handleRangeRequest(c *gin.Context, ctx context.Context, minioClient *infra.MinioClient, bucket, key, rangeHeader string, downloadMode bool) {
 	// Get file metadata first
 	objInfo, err := minioClient.HeadObject(ctx, bucket, key)
 	if err != nil {
@@ -241,6 +266,12 @@ func (ctrl *Controller) handleRangeRequest(c *gin.Context, ctx context.Context, 
 	c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, objInfo.Size))
 	c.Header("Accept-Ranges", "bytes")
 	c.Header("ETag", objInfo.ETag)
+
+	// Set download headers if requested
+	if downloadMode {
+		ctrl.setDownloadHeaders(c, key)
+	}
+
 	ctrl.setCacheHeaders(c, false)
 	c.Status(http.StatusPartialContent)
 
@@ -284,6 +315,16 @@ func (ctrl *Controller) setCacheHeaders(c *gin.Context, fromCache bool) {
 		c.Header("Pragma", "no-cache")
 		c.Header("Expires", "0")
 	}
+}
+
+// setDownloadHeaders sets Content-Disposition header to force file download
+func (ctrl *Controller) setDownloadHeaders(c *gin.Context, key string) {
+	// Extract filename from key path
+	filename := filepath.Base(key)
+
+	// Set Content-Disposition header with filename
+	// Using attachment to force download, and properly quote the filename
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 }
 
 // parseRangeHeader parses HTTP Range header and returns start, end positions

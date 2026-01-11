@@ -52,7 +52,7 @@ jobs:
 
       - name: Restart pods to apply changes
         run: |
-          kubectl rollout restart deployment gau-cdn-deployment -n bao-staging-env
+          kubectl rollout restart deployment gau-cdn-http-deployment -n bao-staging-env
 
       - name : Check pods status
         run: |
